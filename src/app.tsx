@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import * as CanvaUI from '@canva/app-ui-kit';
 import { upload } from '@canva/asset';
-import { addElementAtCursor, addElementAtPoint, addNativeElement } from '@canva/design';
+import { addElementAtPoint } from '@canva/design';
 
 interface CloudinaryAsset {
   id: string;
@@ -32,6 +32,8 @@ export default function CloudinarySearch() {
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [continuation, setContinuation] = useState<string | null>(null);
+  const [selectedAsset, setSelectedAsset] = useState<CloudinaryAsset | null>(null);
+  const [showDetailsModal, setShowDetailsModal] = useState(false);
   const searchTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
 
   useEffect(() => {
@@ -68,14 +70,6 @@ export default function CloudinarySearch() {
         setAssets(prev => cursor ? [...prev, ...data.resources] : data.resources);
         setHasMore(!!data.continuation);
         setContinuation(data.continuation);
-        
-        // Debug: Log asset types
-        console.log('Asset types received:', data.resources.map(asset => ({
-          name: asset.name,
-          type: asset.type,
-          resource_type: asset.resource_type,
-          format: asset.format
-        })));
       } else {
         console.error('Search failed:', data.message);
       }
@@ -126,7 +120,6 @@ export default function CloudinarySearch() {
           break;
         default:
           console.warn('Unsupported asset type:', asset.type);
-          // Try to handle as image as fallback
           await addImageToDesign(asset);
       }
     } catch (error) {
@@ -254,34 +247,14 @@ export default function CloudinarySearch() {
     console.log('✅ Successfully added audio to design');
   };
 
-  const getAssetTypeBadge = (type: string) => {
-    const badges = {
-      'IMAGE': { label: 'Image', color: '#10b981' },
-      'VIDEO': { label: 'Video', color: '#ef4444' },
-      'AUDIO': { label: 'Audio', color: '#8b5cf6' },
-      'FILE': { label: 'File', color: '#6b7280' }
-    };
+  const showAssetDetails = (asset: CloudinaryAsset) => {
+    setSelectedAsset(asset);
+    setShowDetailsModal(true);
+  };
 
-    const badge = badges[type as keyof typeof badges] || badges.FILE;
-
-    return (
-      <div
-        style={{
-          backgroundColor: badge.color,
-          color: 'white',
-          padding: '2px 6px',
-          borderRadius: '4px',
-          fontSize: '10px',
-          fontWeight: 'bold',
-          position: 'absolute',
-          top: '8px',
-          right: '8px',
-          zIndex: 1
-        }}
-      >
-        {badge.label}
-      </div>
-    );
+  const handleContextMenu = (asset: CloudinaryAsset, event: React.MouseEvent) => {
+    event.preventDefault();
+    showAssetDetails(asset);
   };
 
   const AssetGrid = () => {
@@ -325,6 +298,7 @@ export default function CloudinarySearch() {
           <div
             key={asset.id}
             onClick={() => addToDesign(asset)}
+            onContextMenu={(e) => handleContextMenu(asset, e)}
             style={{
               padding: '8px',
               backgroundColor: '#f8f9fa',
@@ -349,8 +323,35 @@ export default function CloudinarySearch() {
               e.currentTarget.style.boxShadow = 'none';
             }}
           >
-            {/* Type Badge */}
-            {getAssetTypeBadge(asset.type)}
+            {/* Three dots menu button */}
+            <div
+              style={{
+                position: 'absolute',
+                top: '8px',
+                right: '8px',
+                zIndex: 1,
+                opacity: 0,
+                transition: 'opacity 0.2s ease'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.opacity = '1';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.opacity = '0';
+              }}
+            >
+              <CanvaUI.Button
+                variant="tertiary"
+                size="small"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  showAssetDetails(asset);
+                }}
+                aria-label="More options"
+              >
+                ⋮
+              </CanvaUI.Button>
+            </div>
 
             {/* Media Container */}
             <div style={{
@@ -390,30 +391,34 @@ export default function CloudinarySearch() {
             </div>
             
             {/* Text Content */}
-            <div style={{ padding: '0 4px' }}>
-              <CanvaUI.Text
-                size="small"
-                tone="primary"
-                alignment="center"
-                lineClamp={2}
-                style={{ 
-                  fontWeight: '500',
-                  marginBottom: '4px'
-                }}
-              >
+            <div style={{ padding: '0 4px', textAlign: 'center' as const }}>
+              <div style={{ 
+                fontWeight: 500,
+                marginBottom: '4px',
+                fontSize: '14px',
+                lineHeight: '1.4',
+                maxHeight: '2.8em',
+                overflow: 'hidden',
+                display: '-webkit-box',
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: 'vertical'
+              }}>
                 {asset.name}
-              </CanvaUI.Text>
+              </div>
               
               {asset.tags && asset.tags.length > 0 && (
-                <CanvaUI.Text
-                  size="xsmall"
-                  tone="tertiary"
-                  alignment="center"
-                  lineClamp={1}
-                >
+                <div style={{
+                  fontSize: '12px',
+                  color: '#666',
+                  lineHeight: '1.4',
+                  maxHeight: '1.4em',
+                  overflow: 'hidden',
+                  whiteSpace: 'nowrap',
+                  textOverflow: 'ellipsis'
+                }}>
                   {asset.tags.slice(0, 2).join(', ')}
                   {asset.tags.length > 2 ? '...' : ''}
-                </CanvaUI.Text>
+                </div>
               )}
             </div>
           </div>
@@ -456,7 +461,7 @@ export default function CloudinarySearch() {
             padding: '20px'
           }}>
             <CanvaUI.LoadingIndicator />
-            <CanvaUI.Text style={{ marginLeft: '8px' }} tone="secondary">Loading more...</CanvaUI.Text>
+            <span style={{ marginLeft: '8px', color: '#666', fontSize: '14px' }}>Loading more...</span>
           </div>
         )}
 
@@ -476,6 +481,117 @@ export default function CloudinarySearch() {
           </div>
         )}
       </div>
+
+      {/* Asset Details Modal */}
+      {showDetailsModal && selectedAsset && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            backgroundColor: 'white',
+            borderRadius: '8px',
+            padding: '24px',
+            maxWidth: '500px',
+            width: '90%',
+            maxHeight: '80vh',
+            overflow: 'auto'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <CanvaUI.Text variant="bold" size="large">{selectedAsset.name}</CanvaUI.Text>
+              <CanvaUI.Button
+                variant="tertiary"
+                onClick={() => setShowDetailsModal(false)}
+                aria-label="Close"
+              >
+                ×
+              </CanvaUI.Button>
+            </div>
+            
+            <div style={{ marginBottom: '16px' }}>
+              <img
+                src={selectedAsset.preview || selectedAsset.thumbnail}
+                alt={selectedAsset.name}
+                style={{
+                  width: '100%',
+                  maxHeight: '200px',
+                  objectFit: 'contain',
+                  borderRadius: '8px',
+                  backgroundColor: '#f5f5f5'
+                }}
+              />
+            </div>
+            
+            <div style={{ display: 'grid', gap: '12px', marginBottom: '24px' }}>
+              <div>
+                <CanvaUI.Text variant="bold">Name</CanvaUI.Text>
+                <CanvaUI.Text>{selectedAsset.name}</CanvaUI.Text>
+              </div>
+              
+              <div>
+                <CanvaUI.Text variant="bold">Type</CanvaUI.Text>
+                <CanvaUI.Text>
+                  {selectedAsset.type} • {selectedAsset.format?.toUpperCase()}
+                </CanvaUI.Text>
+              </div>
+              
+              {selectedAsset.tags && selectedAsset.tags.length > 0 && (
+                <div>
+                  <CanvaUI.Text variant="bold">Tags</CanvaUI.Text>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px' }}>
+                    {selectedAsset.tags.map((tag, index) => (
+                      <div
+                        key={index}
+                        style={{
+                          backgroundColor: '#e9ecef',
+                          padding: '4px 8px',
+                          borderRadius: '12px',
+                          fontSize: '12px'
+                        }}
+                      >
+                        {tag}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              
+              <div>
+                <CanvaUI.Text variant="bold">Cloudinary ID</CanvaUI.Text>
+                <CanvaUI.Text tone="tertiary" size="small">
+                  {selectedAsset.public_id}
+                </CanvaUI.Text>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <CanvaUI.Button
+                variant="secondary"
+                onClick={() => setShowDetailsModal(false)}
+              >
+                Close
+              </CanvaUI.Button>
+              <CanvaUI.Button
+                variant="primary"
+                onClick={() => {
+                  addToDesign(selectedAsset);
+                  setShowDetailsModal(false);
+                }}
+              >
+                Add to Design
+              </CanvaUI.Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
