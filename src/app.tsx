@@ -12,9 +12,11 @@ interface CloudinaryAsset {
   thumbnail: string;
   preview?: string;
   contentType: string;
-  type: 'IMAGE';
+  type: 'IMAGE' | 'VIDEO' | 'AUDIO' | 'FILE';
   tags?: string[];
   format?: string;
+  resource_type?: string;
+  public_id?: string;
 }
 
 interface SearchResponse {
@@ -29,6 +31,7 @@ export default function CloudinarySearch() {
   const [searchText, setSearchText] = useState('');
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  const [continuation, setContinuation] = useState<string | null>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
 
   useEffect(() => {
@@ -45,6 +48,7 @@ export default function CloudinarySearch() {
       setLoading(true);
       setAssets([]);
       setHasMore(true);
+      setContinuation(null);
     }
 
     try {
@@ -63,15 +67,15 @@ export default function CloudinarySearch() {
       if (data.type === 'SUCCESS') {
         setAssets(prev => cursor ? [...prev, ...data.resources] : data.resources);
         setHasMore(!!data.continuation);
+        setContinuation(data.continuation);
         
-        // Debug: Log the first asset to check thumbnail URL
-        if (data.resources.length > 0) {
-          console.log('First asset:', {
-            name: data.resources[0].name,
-            thumbnail: data.resources[0].thumbnail,
-            preview: data.resources[0].preview
-          });
-        }
+        // Debug: Log asset types
+        console.log('Asset types received:', data.resources.map(asset => ({
+          name: asset.name,
+          type: asset.type,
+          resource_type: asset.resource_type,
+          format: asset.format
+        })));
       } else {
         console.error('Search failed:', data.message);
       }
@@ -95,56 +99,189 @@ export default function CloudinarySearch() {
   };
 
   const loadMore = useCallback(() => {
-    if (!loading && hasMore && assets.length > 0) {
-      searchAssets(searchText);
+    if (!loading && hasMore && continuation) {
+      searchAssets(searchText, continuation);
     }
-  }, [loading, hasMore, assets, searchText]);
+  }, [loading, hasMore, continuation, searchText]);
 
   const addToDesign = async (asset: CloudinaryAsset) => {
     try {
-      // Map content type to proper MIME type
-      const getMimeType = (contentType: string, format?: string): string => {
-        const mimeMap: Record<string, string> = {
-          'jpg': 'image/jpeg',
-          'jpeg': 'image/jpeg',
-          'png': 'image/png',
-          'gif': 'image/gif',
-          'webp': 'image/webp',
-          'svg': 'image/svg+xml',
-        };
-        
-        if (contentType && contentType.startsWith('image/')) {
-          return contentType;
-        }
-        
-        return mimeMap[format?.toLowerCase() || ''] || 'image/jpeg';
-      };
-  
-      const mimeType = getMimeType(asset.contentType, asset.format);
-  
-      // Upload the asset to Canva with proper AI disclosure
-      const uploadedAsset = await upload({
-        type: 'image',
-        mimeType,
-        url: asset.url, // Use original URL for upload
-        thumbnailUrl: asset.preview || asset.thumbnail, // Use preview for better thumbnail
-        aiDisclosure: 'none' // Updated to string format for non-AI assets
+      console.log('Adding asset to design:', {
+        name: asset.name,
+        type: asset.type,
+        contentType: asset.contentType,
+        format: asset.format
       });
-  
-      // Add to design at center (omit top/left/width/height to default to center)
-      await addElementAtPoint({
-        type: 'image',
-        ref: uploadedAsset.ref,
-        altText: {
-          text: asset.name || 'Imported image',
-          decorative: false
-        }
-      });
-  
-      console.log('✅ Successfully added image to design');
+
+      // Handle different asset types
+      switch (asset.type) {
+        case 'IMAGE':
+          await addImageToDesign(asset);
+          break;
+        case 'VIDEO':
+          await addVideoToDesign(asset);
+          break;
+        case 'AUDIO':
+          await addAudioToDesign(asset);
+          break;
+        default:
+          console.warn('Unsupported asset type:', asset.type);
+          // Try to handle as image as fallback
+          await addImageToDesign(asset);
+      }
     } catch (error) {
-      console.error('❌ Failed to add image to design:', error);
+      console.error('❌ Failed to add asset to design:', error);
     }
+  };
+
+  const addImageToDesign = async (asset: CloudinaryAsset) => {
+    const getMimeType = (contentType: string, format?: string): string => {
+      const mimeMap: Record<string, string> = {
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+        'png': 'image/png',
+        'gif': 'image/gif',
+        'webp': 'image/webp',
+        'svg': 'image/svg+xml',
+        'avif': 'image/avif',
+        'tiff': 'image/tiff'
+      };
+      
+      if (contentType && contentType.startsWith('image/')) {
+        return contentType;
+      }
+      
+      return mimeMap[format?.toLowerCase() || ''] || 'image/jpeg';
+    };
+
+    const mimeType = getMimeType(asset.contentType, asset.format);
+
+    const uploadedAsset = await upload({
+      type: 'image',
+      mimeType,
+      url: asset.url,
+      thumbnailUrl: asset.preview || asset.thumbnail,
+      aiDisclosure: 'none'
+    });
+
+    await addElementAtPoint({
+      type: 'image',
+      ref: uploadedAsset.ref,
+      altText: {
+        text: asset.name || 'Imported image',
+        decorative: false
+      }
+    });
+
+    console.log('✅ Successfully added image to design');
+  };
+
+  const addVideoToDesign = async (asset: CloudinaryAsset) => {
+    const getMimeType = (contentType: string, format?: string): string => {
+      const mimeMap: Record<string, string> = {
+        'mp4': 'video/mp4',
+        'mov': 'video/quicktime',
+        'avi': 'video/x-msvideo',
+        'mkv': 'video/x-matroska',
+        'webm': 'video/webm'
+      };
+      
+      if (contentType && contentType.startsWith('video/')) {
+        return contentType;
+      }
+      
+      return mimeMap[format?.toLowerCase() || ''] || 'video/mp4';
+    };
+
+    const mimeType = getMimeType(asset.contentType, asset.format);
+
+    const uploadedAsset = await upload({
+      type: 'video',
+      mimeType,
+      url: asset.url,
+      thumbnailUrl: asset.preview || asset.thumbnail,
+      aiDisclosure: 'none'
+    });
+
+    await addElementAtPoint({
+      type: 'video',
+      ref: uploadedAsset.ref,
+      altText: {
+        text: asset.name || 'Imported video',
+        decorative: false
+      }
+    });
+
+    console.log('✅ Successfully added video to design');
+  };
+
+  const addAudioToDesign = async (asset: CloudinaryAsset) => {
+    const getMimeType = (contentType: string, format?: string): string => {
+      const mimeMap: Record<string, string> = {
+        'mp3': 'audio/mpeg',
+        'wav': 'audio/wav',
+        'ogg': 'audio/ogg',
+        'm4a': 'audio/mp4',
+        'flac': 'audio/flac'
+      };
+      
+      if (contentType && contentType.startsWith('audio/')) {
+        return contentType;
+      }
+      
+      return mimeMap[format?.toLowerCase() || ''] || 'audio/mpeg';
+    };
+
+    const mimeType = getMimeType(asset.contentType, asset.format);
+
+    const uploadedAsset = await upload({
+      type: 'audio',
+      mimeType,
+      url: asset.url,
+      thumbnailUrl: asset.preview || asset.thumbnail,
+      aiDisclosure: 'none'
+    });
+
+    await addElementAtPoint({
+      type: 'audio',
+      ref: uploadedAsset.ref,
+      altText: {
+        text: asset.name || 'Imported audio',
+        decorative: false
+      }
+    });
+
+    console.log('✅ Successfully added audio to design');
+  };
+
+  const getAssetTypeBadge = (type: string) => {
+    const badges = {
+      'IMAGE': { label: 'Image', color: '#10b981' },
+      'VIDEO': { label: 'Video', color: '#ef4444' },
+      'AUDIO': { label: 'Audio', color: '#8b5cf6' },
+      'FILE': { label: 'File', color: '#6b7280' }
+    };
+
+    const badge = badges[type as keyof typeof badges] || badges.FILE;
+
+    return (
+      <div
+        style={{
+          backgroundColor: badge.color,
+          color: 'white',
+          padding: '2px 6px',
+          borderRadius: '4px',
+          fontSize: '10px',
+          fontWeight: 'bold',
+          position: 'absolute',
+          top: '8px',
+          right: '8px',
+          zIndex: 1
+        }}
+      >
+        {badge.label}
+      </div>
+    );
   };
 
   const AssetGrid = () => {
@@ -170,7 +307,7 @@ export default function CloudinarySearch() {
           padding: '32px',
           color: '#666'
         }}>
-          <CanvaUI.Text tone="tertiary">No images found. Try a different search term.</CanvaUI.Text>
+          <CanvaUI.Text tone="tertiary">No media found. Try a different search term.</CanvaUI.Text>
         </div>
       );
     }
@@ -198,7 +335,8 @@ export default function CloudinarySearch() {
               gap: '6px',
               cursor: 'pointer',
               transition: 'all 0.2s ease',
-              height: 'fit-content'
+              height: 'fit-content',
+              position: 'relative'
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.backgroundColor = '#e9ecef';
@@ -211,7 +349,10 @@ export default function CloudinarySearch() {
               e.currentTarget.style.boxShadow = 'none';
             }}
           >
-            {/* Image Container */}
+            {/* Type Badge */}
+            {getAssetTypeBadge(asset.type)}
+
+            {/* Media Container */}
             <div style={{
               width: '100%',
               height: '140px',
@@ -220,7 +361,8 @@ export default function CloudinarySearch() {
               backgroundColor: '#f1f3f4',
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center'
+              justifyContent: 'center',
+              position: 'relative'
             }}>
               <img
                 src={asset.preview || asset.thumbnail}
@@ -233,12 +375,14 @@ export default function CloudinarySearch() {
                 }}
                 loading="lazy"
                 onError={(e) => {
-                  // Fallback if image fails to load
                   const target = e.target as HTMLImageElement;
                   target.style.display = 'none';
                   target.parentElement!.innerHTML = `
-                    <div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #666;">
-                      <span>No preview</span>
+                    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: #666; padding: 8px; text-align: center;">
+                      <div style="font-size: 24px; margin-bottom: 8px;">
+                        ${asset.type === 'AUDIO' ? '🎵' : asset.type === 'VIDEO' ? '🎥' : '📄'}
+                      </div>
+                      <span style="font-size: 12px; font-weight: 500;">${asset.type}</span>
                     </div>
                   `;
                 }}
@@ -289,7 +433,7 @@ export default function CloudinarySearch() {
       {/* Search Header */}
       <div style={{ paddingBottom: '12px' }}>
         <CanvaUI.TextInput
-          placeholder="Search images by name or tags..."
+          placeholder="Search images, videos, audio..."
           value={searchText}
           onChange={handleInputChange}
         />
@@ -327,7 +471,7 @@ export default function CloudinarySearch() {
               variant="secondary"
               onClick={loadMore}
             >
-              Load More Images
+              Load More Media
             </CanvaUI.Button>
           </div>
         )}
