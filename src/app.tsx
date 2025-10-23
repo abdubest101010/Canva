@@ -329,8 +329,7 @@ export default function CloudinarySearch() {
         placeholder="Search images, videos, audio..."
         startIcon={<SearchIcon />}
         value={searchText}
-        onChange={(e) => handleInputChange(e.target.value)}
-      />
+       onChange={(value) => handleInputChange(value)}      />
 
       <Rows spacing="1u" style={{ flex: 1, overflow: 'auto' }}>
         {/* Loading/Empty State */}

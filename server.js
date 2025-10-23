@@ -152,24 +152,31 @@ async function updateAssetCache() {
 
 
 // --- Main search endpoint now uses the local cache ---
+// --- Main search endpoint now uses the local cache ---
 app.post('/api/findResources', async (req, res) => {
-    if (!cacheInitialized) {
-        return res.status(503).json({
-            type: 'ERROR',
-            resources: [],
-            continuation: null,
-            message: 'Asset cache is not yet initialized. Please wait a moment.'
-        });
-    }
+    if (!cacheInitialized) {
+        return res.status(503).json({
+            type: 'ERROR',
+            resources: [],
+            continuation: null,
+            message: 'Asset cache is not yet initialized. Please wait a moment.'
+        });
+    }
 
-    try {
-        const { searchText, cursor } = req.body;
-        const query = (searchText || '').trim().toLowerCase();
-        
-        // 1. Filter the entire local cache based on search text (Unlimited API calls!)
+    try {
+        const { searchText, cursor } = req.body;
+        const query = (searchText || '').trim();
+
         let filteredAssets;
         if (query) {
-            filteredAssets = assetCache.filter(asset => asset.searchable.includes(query));
+            // Split the search query into individual words
+            const searchTerms = query.toLowerCase().split(/\s+/);
+
+            // Filter assets where ALL search terms are found in the searchable string
+            // This implements an "AND" search. For an "OR" search, use `.some()`.
+            filteredAssets = assetCache.filter(asset => {
+                return searchTerms.every(term => asset.searchable.includes(term));
+            });
         } else {
             // If no query, show everything
             filteredAssets = assetCache;
@@ -180,24 +187,23 @@ app.post('/api/findResources', async (req, res) => {
         const endIndex = startIndex + ASSETS_PER_PAGE;
         
         const resources = filteredAssets.slice(startIndex, endIndex);
-        
         const nextCursor = endIndex < filteredAssets.length ? endIndex.toString() : null;
 
-        res.json({
-            type: 'SUCCESS',
-            resources,
-            continuation: nextCursor
-        });
+        res.json({
+            type: 'SUCCESS',
+            resources,
+            continuation: nextCursor
+        });
 
-    } catch (error) {
-        console.error('❌ Local Search error:', error.message);
-        res.status(500).json({
-            type: 'ERROR',
-            resources: [],
-            continuation: null,
-            message: 'Local search failed: ' + error.message
-        });
-    }
+    } catch (error) {
+        console.error('❌ Local Search error:', error.message);
+        res.status(500).json({
+            type: 'ERROR',
+            resources: [],
+            continuation: null,
+            message: 'Local search failed: ' + error.message
+        });
+    }
 });
 
 // Start server and initialize cache
