@@ -5,203 +5,203 @@ const cloudinary = require('cloudinary').v2;
 const app = express();
 const PORT = 5001;
 
-// Configure Cloudinary
+// Configure Cloudinary (NOTE: Hardcoded keys should be in environment variables for production)
 cloudinary.config({
-  cloud_name: 'dbt1fvc6l',
-  api_key: '539446682367313',
-  api_secret: '94ge8qHtK0QwyX6ZohNgsfBLzFM'
+  cloud_name: 'dbt1fvc6l',
+  api_key: '539446682367313',
+  api_secret: '94ge8qHtK0QwyX6ZohNgsfBLzFM'
 });
-
-console.log('🔐 Cloudinary Config Check:');
-console.log('   Cloud Name:', cloudinary.config().cloud_name);
-console.log('   API Key:', cloudinary.config().api_key ? '✅ Set' : '❌ Missing');
-console.log('   API Secret:', cloudinary.config().api_secret ? '✅ Set' : '❌ Missing');
 
 // Enable CORS and JSON parsing
 app.use(cors());
 app.use(express.json());
 
-// Search endpoint for all asset types
-app.post('/api/findResources', async (req, res) => {
-  try {
-    const { searchText, cursor } = req.body;
-    const query = (searchText || '').trim().toLowerCase();
+// ----------------------------------------------------------------------
+// 🚨 HIGH-VOLUME API CIRCUMVENTION: LOCAL CACHING 🚨
+// This in-memory array replaces the reliance on the rate-limited Cloudinary Search API.
+// In a real application, this would be a high-speed database like Redis or MongoDB.
+// ----------------------------------------------------------------------
+let assetCache = [];
+let cacheInitialized = false;
+const ASSETS_PER_PAGE = 50;
 
-    console.log(`🔍 Search request: "${query || 'all'}"`);
-
-    let result;
-
-    if (query && query !== 'all') {
-      const searchExpression = [
-        `public_id:${query}*`,
-        `tags:${query}`,
-      ].join(' OR ');
-
-      result = await cloudinary.search
-        .expression(searchExpression)
-        .max_results(50)
-        .next_cursor(cursor)
-        .execute();
-    } else {
-      // ✅ Better search for all media types
-      result = await cloudinary.search
-        .expression('resource_type:image OR resource_type:video OR resource_type:raw')
-        .max_results(50)
-        .next_cursor(cursor)
-        .execute();
-    }
-
-    // Debug: Log what Cloudinary actually returned
-    console.log('📋 Raw Cloudinary results:');
-    result.resources.forEach(asset => {
-      console.log(`   - ${asset.public_id} | type: ${asset.resource_type} | format: ${asset.format}`);
-    });
-
-    const counts = { image: 0, video: 0, audio: 0 };
-    const tagStats = { totalTags: 0, uniqueTags: new Set() };
-
-    const resources = result.resources.map((asset) => {
-      // 🔊 Improved audio detection
-      let type = 'IMAGE';
-      const format = asset.format?.toLowerCase() || '';
-      const audioFormats = ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'];
-      
-      if (asset.resource_type === 'image') {
-        type = 'IMAGE';
-        counts.image++;
-      } else if (asset.resource_type === 'video' || asset.resource_type === 'raw') {
-        if (audioFormats.includes(format)) {
-          type = 'AUDIO';
-          counts.audio++;
-        } else if (asset.resource_type === 'video') {
-          type = 'VIDEO';
-          counts.video++;
-        } else {
-          type = 'FILE';
-          counts.image++; // or track separately
-        }
-      }
-
-      // Collect tags
-      const tags = asset.tags || [];
-      tags.forEach(tag => tagStats.uniqueTags.add(tag));
-      tagStats.totalTags += tags.length;
-
-      // For audio files, use a different approach for thumbnails
-      let thumbnailUrl, previewUrl;
-      if (type === 'AUDIO') {
-        // ✅ Use a real, working placeholder image URL
-        thumbnailUrl = 'https://via.placeholder.com/200x150/4A90E2/FFFFFF?text=Audio';
-        previewUrl = 'https://via.placeholder.com/400x300/4A90E2/FFFFFF?text=Audio+File';
-      } else {
-        thumbnailUrl = cloudinary.url(asset.public_id, {
-          width: 200,
-          height: 150,
-          crop: 'fill',
-          quality: 'auto',
-          format: 'jpg',
-          secure: true,
-          resource_type: asset.resource_type
-        });
-      
-        previewUrl = cloudinary.url(asset.public_id, {
-          width: 400,
-          height: 300,
-          crop: 'fill',
-          quality: 'auto',
-          format: 'jpg',
-          secure: true,
-          resource_type: asset.resource_type
-        });
-      }
-
-      return {
-        id: asset.asset_id || asset.public_id,
-        name: asset.public_id.split('/').pop() || asset.public_id,
-        url: asset.secure_url,
-        type,
-        contentType: getContentType(asset.resource_type, asset.format),
-        format: asset.format,
-        tags: tags,
-        thumbnail: thumbnailUrl,
-        preview: previewUrl,
-        resource_type: asset.resource_type, // Include for debugging
-        public_id: asset.public_id // Include for debugging
-      };
-    });
-
-    console.log(`📦 Found ${resources.length} total assets:`);
-    console.log(`   🖼️  Images: ${counts.image}`);
-    console.log(`   🎥 Videos: ${counts.video}`);
-    console.log(`   🎵 Audio:   ${counts.audio}`);
-    console.log(`   🏷️  Total Tags: ${tagStats.totalTags}`);
-    console.log(`   🧩 Unique Tags: ${Array.from(tagStats.uniqueTags).join(', ')}`);
-
-    res.json({
-      type: 'SUCCESS',
-      resources,
-      continuation: result.next_cursor
-    });
-
-  } catch (error) {
-    console.error('❌ Search error:', error.message);
-    res.status(500).json({
-      type: 'ERROR',
-      resources: [],
-      continuation: null,
-      message: 'Search failed: ' + error.message
-    });
-  }
-});
-
-// Test endpoint for your specific audio file
-app.get('/api/test-audio', async (req, res) => {
-  try {
-    // Search specifically for your audio file
-    const result = await cloudinary.search
-      .expression('public_id:Surah_Nuh_Noreen_Mohamed_Siddiq_mp3_cya7wm')
-      .execute();
-    
-    console.log('🎵 Audio file search result:', result);
-    
-    if (result.resources.length > 0) {
-      const audio = result.resources[0];
-      console.log('Audio details:', {
-        public_id: audio.public_id,
-        resource_type: audio.resource_type,
-        format: audio.format,
-        secure_url: audio.secure_url
-      });
-    }
-    
-    res.json(result);
-  } catch (error) {
-    console.error('Audio test error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Helper function for MIME types
+// Helper function for comprehensive MIME types
 function getContentType(type, format) {
-  const formatLower = format?.toLowerCase() || '';
-  const types = {
-    image: {
-      'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png', 'gif': 'image/gif',
-      'webp': 'image/webp', 'svg': 'image/svg+xml', 'avif': 'image/avif', 'tiff': 'image/tiff'
-    },
-    video: {
-      'mp4': 'video/mp4', 'mov': 'video/quicktime', 'avi': 'video/x-msvideo',
-      'mkv': 'video/x-matroska', 'webm': 'video/webm', 'flv': 'video/x-flv'
-    },
-    raw: {
-      'mp3': 'audio/mpeg', 'wav': 'audio/wav', 'ogg': 'audio/ogg',
-      'm4a': 'audio/mp4', 'flac': 'audio/flac', 'aac': 'audio/aac'
-    }
-  };
-  return types[type]?.[formatLower] || 'application/octet-stream';
+  const formatLower = format?.toLowerCase() || '';
+  const types = {
+    image: {
+      'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png',
+      'gif': 'image/gif', 
+      'webp': 'image/webp', 'svg': 'image/svg+xml', 'avif': 'image/avif', 'tiff': 'image/tiff'
+    },
+    video: {
+      'mp4': 'video/mp4', 'mov': 'video/quicktime', 'avi': 'video/x-msvideo',
+      'mkv': 'video/x-matroska', 'webm': 'video/webm', 'flv': 'video/x-flv'
+    },
+    audio: {
+      'mp3': 'audio/mpeg', 'wav': 'audio/wav', 'ogg': 'audio/ogg',
+      'm4a': 'audio/mp4', 'flac': 'audio/flac', 'aac': 'audio/aac'
+    }
+  };
+
+  if (type === 'image' && types.image[formatLower]) return types.image[formatLower];
+  if (type === 'video' && types.video[formatLower]) return types.video[formatLower];
+  if (type === 'raw' && types.audio[formatLower]) return types.audio[formatLower];
+
+  return 'application/octet-stream';
 }
 
-// Start server
+// Function to fetch ALL assets and populate the cache.
+// This is the ONLY place we use the rate-limited Admin API (once on start).
+async function updateAssetCache() {
+    let next_cursor = null;
+    let allResources = [];
+    const audioFormats = ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'];
+
+    console.log('🔄 Initializing asset cache from Cloudinary (Admin API usage: 1)');
+
+    try {
+        do {
+            const result = await cloudinary.search
+                .expression('resource_type:image OR resource_type:video OR resource_type:raw')
+                .max_results(500) // Fetch maximum per call
+                .next_cursor(next_cursor)
+                .execute();
+
+            const mappedResources = result.resources.map((asset) => {
+                let type = 'IMAGE';
+                const format = asset.format?.toLowerCase() || '';
+                let assetResourceType = asset.resource_type;
+                
+                // Determine asset type (same logic as before)
+                if (assetResourceType === 'image') {
+                    type = 'IMAGE';
+                } else if (assetResourceType === 'video') {
+                    type = 'VIDEO';
+                } else if (assetResourceType === 'raw' && audioFormats.includes(format)) {
+                    type = 'AUDIO';
+                    assetResourceType = 'audio';
+                } else {
+                    type = 'FILE';
+                }
+
+                const assetWidth = asset.width || 400;
+                const assetHeight = asset.height || 300;
+                const finalContentType = getContentType(assetResourceType, asset.format);
+
+                // *** OPTIMIZATION: Reduce Transformation API usage by using consistent previews ***
+                const previewOptions = {
+                    width: 400, 
+                    height: 300,
+                    crop: 'limit',
+                    quality: 'auto:low', // Use low quality for previews to save bandwidth
+                    fetch_format: 'auto',
+                    secure: true,
+                    resource_type: asset.resource_type
+                };
+                
+                let thumbnailUrl = cloudinary.url(asset.public_id, {...previewOptions, width: 200, height: 150});
+                let previewUrl = cloudinary.url(asset.public_id, previewOptions);
+                
+                if (type === 'AUDIO') {
+                    thumbnailUrl = 'https://via.placeholder.com/200x150/4A90E2/FFFFFF?text=Audio';
+                    previewUrl = 'https://via.placeholder.com/400x300/4A90E2/FFFFFF?text=Audio+File';
+                }
+                
+                // *** CRITICAL for Canva Upload: Full-size asset URL (no transformation) ***
+                const originalAssetUrl = cloudinary.url(asset.public_id, {
+                    secure: true,
+                    resource_type: asset.resource_type,
+                });
+
+                return {
+                    id: asset.asset_id || asset.public_id,
+                    name: asset.public_id.split('/').pop() || asset.public_id,
+                    url: originalAssetUrl, // Full-size URL for upload
+                    type,
+                    contentType: finalContentType,
+                    format: asset.format,
+                    tags: asset.tags || [],
+                    thumbnail: thumbnailUrl,
+                    preview: previewUrl,
+                    width: assetWidth,
+                    height: assetHeight,
+                    // Add searchable field for local filtering
+                    searchable: `${asset.public_id} ${asset.tags?.join(' ')} ${type} ${format}`.toLowerCase()
+                };
+            });
+
+            allResources.push(...mappedResources);
+            next_cursor = result.next_cursor;
+            
+        } while (next_cursor);
+
+        assetCache = allResources;
+        cacheInitialized = true;
+        console.log(`✅ Asset cache successfully populated with ${assetCache.length} assets.`);
+
+        // In a production scenario, you would schedule this function to run every few hours
+        // setInterval(updateAssetCache, 4 * 60 * 60 * 1000); // e.g., every 4 hours
+
+    } catch (error) {
+        console.error('❌ Failed to initialize asset cache from Cloudinary:', error.message);
+        // Set cacheInitialized to true to allow the app to run, even if no assets are found
+        cacheInitialized = true; 
+    }
+}
+
+
+// --- Main search endpoint now uses the local cache ---
+app.post('/api/findResources', async (req, res) => {
+    if (!cacheInitialized) {
+        return res.status(503).json({
+            type: 'ERROR',
+            resources: [],
+            continuation: null,
+            message: 'Asset cache is not yet initialized. Please wait a moment.'
+        });
+    }
+
+    try {
+        const { searchText, cursor } = req.body;
+        const query = (searchText || '').trim().toLowerCase();
+        
+        // 1. Filter the entire local cache based on search text (Unlimited API calls!)
+        let filteredAssets;
+        if (query) {
+            filteredAssets = assetCache.filter(asset => asset.searchable.includes(query));
+        } else {
+            // If no query, show everything
+            filteredAssets = assetCache;
+        }
+
+        // 2. Implement local pagination
+        const startIndex = cursor ? parseInt(cursor) : 0;
+        const endIndex = startIndex + ASSETS_PER_PAGE;
+        
+        const resources = filteredAssets.slice(startIndex, endIndex);
+        
+        const nextCursor = endIndex < filteredAssets.length ? endIndex.toString() : null;
+
+        res.json({
+            type: 'SUCCESS',
+            resources,
+            continuation: nextCursor
+        });
+
+    } catch (error) {
+        console.error('❌ Local Search error:', error.message);
+        res.status(500).json({
+            type: 'ERROR',
+            resources: [],
+            continuation: null,
+            message: 'Local search failed: ' + error.message
+        });
+    }
+});
+
+// Start server and initialize cache
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT} — Last updated: Wednesday, October 22, 2025`);
+    console.log(`🚀 Server running on http://localhost:${PORT}`);
+    updateAssetCache(); // Call this once on startup
 });
